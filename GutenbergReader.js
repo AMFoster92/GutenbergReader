@@ -1,11 +1,28 @@
 import readline from 'node:readline/promises'
 import { start } from 'node:repl';
+import { isTypedArray } from 'node:util/types';
 
 // Gutendex URL constants
 const searchURL = 'https://gutendex.com/books/';
 const search = '?search=';
 const ids = '?ids='
-const bookTypeRegex =  /\btext\/plain\b/g;
+
+// Regex strings
+const regexStrings = new Map([
+    ["bookTypeRegex",  ['\\btext\\/plain\\b','g']],
+    ["startEndRegex", ['\\*{3}.+\\*{3}','g']],                                                               // Matches on the start and end of book notices
+    ["illustrateRegex", ['\\[\\billustration\\b.*\\](\\\\n|\\s){0,1}/','gi']],                                                    // Matches on illustration tags
+    ["newlinesRegex", ['(\\n|\\r)+$/','gm']],                                                                     // Matches on newlines and carriage returns
+    ["actLabelRegex", ['\\bact\\b','']],
+    ["chapterRegex", ['^\\bchapter\\s*\\.*[0-9ivx]+\\.*(\\\\n|\\s){0,1}\\b','im']],
+    ["contentsRegex", ['^\\bcontent[s]+\\s*\\b','im']],
+    ["explanatoryRegex", ['^\\bexplanatory\\s*(\\\\n|\\s){0,1}\\b','im']],
+    ["prefaceRegex", ['^\\bpreface\\s*(\\\\n|\\s){0,1}\\b','im']],
+    ["oneIllustRegex", ['^\\[*\\billustration[s.]*\\b','im']],    
+    ["punctNLRegex", ['(?:[.?\\\'"”])\\n$','im']],
+    ["allPuncRegex", ['[^\\w\\s]{3,}(\\\\n|\\s){0,1}','']],
+    ['keepNLRegex', ['(?=[\n\r])|(?<=[\n\r])', 'g']]
+]);
 
 // Gutenberg URL constants
 const readURL = 'https://www.gutenberg.org/cache/epub/';
@@ -574,7 +591,7 @@ async function selectContinueMenu({cursorPos, data})
         if(bookURL)
         {
             bookURL = data[cursorPos].formats[bookURL];
-            var book = await getBook(bookURL);
+            var book = await getBook(bookURL, data[cursorPos].title);
         }
     }
     catch(error)
@@ -597,7 +614,7 @@ async function selectSearchMenu({cursorPos, curPage, data})
 
     for(let i = 0; i < formats.length; i++)
     {
-        if(formats[i].match(bookTypeRegex))
+        if(formats[i].match(regexStrings['bookTypeRegex']))
         {
             url = formats[i];
         }
@@ -609,7 +626,7 @@ async function selectSearchMenu({cursorPos, curPage, data})
 
         try
         {
-            book = await getBook(url);
+            book = await getBook(url, data[cursorPos].title);
         }
         catch(error)
         {
@@ -793,10 +810,20 @@ async function stringBuilder(type)
 async function getData(str){
     try
     {
+        var data = null;
+
         const request =  await fetch(searchURL + str);
-        const json = await request.json();
+        if(request.ok)
+        {
+            const json = await request.json();
         
-        return json;
+            if(json)
+            {
+                data = json;
+            }
+        }
+
+        return data;
     }
     catch(error)
     {
@@ -805,13 +832,24 @@ async function getData(str){
 }
 
 // get the book text from Gutenberg
-async function getBook(bookURL)
+async function getBook(bookURL, title)
 {
     try
     {
         const request = await fetch(bookURL);
-        var text = await request.text();
-        const book = formatBook(text);
+        if(request)
+        {
+            const text = await request.text();
+
+            if(text)
+            {
+                var book = formatBook(text, title.split());
+            }
+            else
+            {
+                book = null;
+            }
+        }
 
         return book;
     }
@@ -822,261 +860,172 @@ async function getBook(bookURL)
 }
 
 
-// formats the book text into readily consumable pages
-// NOTE: This functions is disgusting. sorry in advance.
+// formats the book text into readily consumable pages.
 // TODO: improve format, track previous tag for 
 // nested tags ie Content -> Chapter, Chapter, Chapter
 // TODO: remove Lists of Ilustrations
-function formatBook(text)
+// TODO: Error Handlers when not english text
+function formatBook(text, title)
 {
-    const startEndRegex = /\*{3}.+\*{3}/g                                                                   // Matches on the start and end of book notices
-    const illustrateRegex = /\[\billustration\b.*\](\\n|\s){0,1}/gi                                                    // Matches on illustration tags
-    const newlinesRegex = /(\n|\r)+$/gm                                                                     // Matches on newlines and carriage returns
-    const chapterRegex = /(^\bchapter\s*\.*[ivx]*\.*(\\n|\s){0,1}\b)/im
-    const contentsRegex = /(^\bcontents\b)/im
-    const explanatoryRegex = /(^\bexplanatory\b)/im;
-    const prefaceRegex = /(^\bpreface\b)/im;
-    const sectionsRegex = /(^\billustration\s*.*(\\n|\s)+\b)/im
-    const oneIllustRegex = /^\[*\billustration[s.]*\b.*\]*\s/im    
-    const punctNLRegex = /(?:[.?'"”])\n$/im                                                                 // Matches on punctuation followed by newline
-    var chapterStart = true;
-    var extraLines = 0;
-    var curLineNum = 0;
-    var totalLines = 0;
     var page = [];
     var book = [];
+    var regexStr = regexStrings.get('startEndRegex')
+    var regex = new RegExp(regexStr[0], regexStr[1]);
 
     // Remove start and end of book notices
-    var matches = text.match(startEndRegex);
+    var matches = text.match(regex);
     var startIndex = text.indexOf(matches[0]) + matches[0].length + 1;
     var endIndex = text.indexOf(matches[1]);
 
     text = text.substring(startIndex, endIndex);
 
     // Remove illustration tags
-    text = text.replace(illustrateRegex, '');
+    regexStr = regexStrings.get('illustrateRegex')
+    regex = new RegExp(regexStr[0], regexStr[1]);
+    text = text.replace(regex, '');
 
     // Remove excess new lines
-    text = text.replace(newlinesRegex, '');
+    regexStr = regexStrings.get('newlinesRegex')
+    regex = new RegExp(regexStr[0], regexStr[1]);
+    text = text.replace(regex, '');
 
     // Replace underscores with spaces
     text = text.replaceAll('_.', ".");
     text = text.replaceAll('_', ' ');
     
     // break text up into lines to form pages
-    text = text.split(/(?<=\n)/).filter(Boolean); 
-
-    
+    regexStr = regexStrings.get('keepNLRegex')
+    regex = new RegExp(regexStr[0], regexStr[1]);
+    text = text.split(regex).filter(Boolean); 
 
     // put pages together
     for(let i = 0; i < text.length; i++)
     {
-        // is it a chapter label?
-        if(chapterRegex.test(text[i]))
+        let lineNum = i % linesPerPage;
+        let curLine = null;
+        let isSectionLabel = false;
+        let isSectionStart = false;
+        [curLine, isSectionLabel] = formatLine(text[i], title);
+        
+        // Check if page is complete before adding
+        if(isSectionLabel && page.length > 0)
         {
-            chapterStart = true;
+            book.push(page);
+            page = []
+        }
 
-            // look ahead
-            for(let j = 1; j < 10; j++)
+        // Did we get an array of lines?
+        if(Array.isArray(curLine))
+        {
+            // Is there room on the page for them?
+            if(curLine.length + page.length <= linesPerPage)
             {
-                if(i+j < text.length)
-                {
-                    if(chapterRegex.test(text[i+j]))
-                    {
-                        chapterStart = false;
-                    }
-                }
-            }
-
-            // look behind
-            for(let k = 10; k > 0; k--)
-            {
-                if(i-k >= 0)
-                {
-                    if(chapterRegex.test(text[i-k]))
-                    {
-                        chapterStart = false;
-                    }
-                }
-            }
-
-            if(chapterStart)
-            {
-                chapterStart = false;
-                page.push(selectTextColor + text[i]);
-
+                page.push(...curLine);
             }
             else
             {
-                page.push(defTextColor + text[i]);
-            }
+                // Move start to end to pop off in order
+                curLine.reverse();
 
-            curLineNum++;
-        }
-        else if (contentsRegex.test(text[i]) || prefaceRegex.test(text[i])|| explanatoryRegex.test(text[i]) || oneIllustRegex.test(text[i]))
-        {
-            page.push(selectTextColor + text[i]);
-            curLineNum++;
-        }
-        // is it a line with punctuation at the end?
-        else if(punctNLRegex.test(text[i]))
-        {
-            if(curLineNum >= linesPerPage-2)
-            {
-                page.push(defTextColor + text[i].replace('\n', ''));
-            }
-            else
-            {
-                page.push(defTextColor + text[i]);
-            }
-            curLineNum++;
-        }
-        else
-        {
-            page.push(defTextColor + text[i].replace('\n', ''));
-        }
-        curLineNum++;
-
-        totalLines = 1;
-
-        // fix line count
-        for(let i = 0; i < page.length; i++)
-        {  
-            // does the line have an extra newline?
-            if(/\n$/m.test(page[i]))
-            {
-                totalLines++;
-            }
-            totalLines++;
-        }
-
-        if(totalLines >= linesPerPage)
-        {
-            curLineNum = linesPerPage;
-        }
-
-        // is the next line a section tag or have we reached our line limit?
-        if(contentsRegex.test(text[i+1]) || prefaceRegex.test(text[i+1])|| explanatoryRegex.test(text[i+1]) || oneIllustRegex.test(text[i+1]) || curLineNum >= linesPerPage || chapterRegex.test(text[i+1]))
-        {
-            if(chapterRegex.test(text[i+1]))
-            {
-                chapterStart = true;
-                // look ahead
-                for(let j = 1; j < 10; j++)
+                do
                 {
-                    if(i+j+1 < text.length)
-                    {
-                        if(chapterRegex.test(text[i+1+j]))
-                        {
-                            chapterStart = false;
-                        }
-                    }
-                }
+                    // get line difference as positive value
+                    let remainingLines = curLine.length < page.length ? page.length - curLine.length : curLine.length - page.length;
 
-                    // look behind
-                for(let k = 10; k > 1; k--)
-                {
-                    if(i-k >= 0)
+                    // Push last lines on.
+                    for(let i = 0; i < remainingLines; i++)
                     {
-                        if(chapterRegex.test(text[i+1-k]))
-                        {
-                            chapterStart = false;
-                        }
-                    }
-                }
-                
-                if(chapterStart)
-                {
-                    for(let i = 0; i < page.length; i++)
-                    {   
-                        // does the line have an extra newline?
-                        if(/\n$/m.test(page[i]))
-                        {
-                            extraLines++;
-                        }
-                    }
-    
-                    extraLines = linesPerPage - page.length - extraLines
-    
-                    for (let i = 0; i < extraLines; i++)
-                    {
-                        page.push(' ');
-                    }
-
-
-                    totalLines = 0;
-                    // fix line count
-                    for(let i = 0; i < page.length; i++)
-                    {  
-                        // does the line have an extra newline?
-                        if(/\n$/m.test(page[i]))
-                        {
-                            totalLines++;
-                        }
-                        totalLines++;
-                    }
-
-                    if(totalLines < linesPerPage)
-                    {
-                        page.push(' ');
+                        page.push(curLine.pop());
                     }
 
                     book.push(page);
                     page = [];
-                    curLineNum = 0;
-                    extraLines = 0;
-                    chapterStart = false;
-                }
+                } while(curLine.length > page.length);
             }
-            else
-            {
-                for(let i = 0; i < page.length; i++)
-                {   
-                    // does the line have an extra newline?
-                    if(/\n$/m.test(page[i]))
-                    {
-                        extraLines++;
-                    }
-                }
+        }
+        // just a single line
 
-                extraLines = linesPerPage - page.length - extraLines
-
-                for (let i = 0; i < extraLines; i++)
-                {
-                    page.push(' ');
-                }
-
-                if(/\n$/.test(page[page.length-1]))
-                {
-                    page[page.length-1] = page[page.length-1].replace(/\n$/, '');
-                }
-
-                totalLines = 0;
-                // fix line count
-                for(let i = 0; i < page.length; i++)
-                {  
-                    // does the line have an extra newline?
-                    if(/\n$/m.test(page[i]))
-                    {
-                        totalLines++;
-                    }
-                    totalLines++;
-                }
-
-                if(totalLines < linesPerPage)
-                {
-                    page.push(' ');
-                }
-
-                book.push(page);
-                page = [];
-                curLineNum = 0;
-                extraLines = 0;
-            }   
+        if(page.length == linesPerPage)
+        {
+            book.push(page);
+            page = [];
         }
     }
 
     return book;    
+}
+
+function formatLine(line, title)
+{
+    
+    var formattedLine = "";
+    var lineColor = null;
+
+    var isSectionLabel = false;
+    var isTitle = false;
+    var regex = null;
+    
+
+
+    // Is this is a section label?
+    regexStrings.forEach((expr, name) =>{
+        regex = new RegExp(expr[0], expr[1])
+        
+        if(regex.test(line) && name != 'keepNLRegex')
+        {
+            isSectionLabel = true;
+        }
+    });
+
+    for(let i = 0; i < title.length; i++)
+    {
+        var titleRegex = new RegExp(`${title[i]}`);
+
+        if(titleRegex.test(line))
+        {
+            isTitle = true;
+        }
+    }
+
+    if(isTitle || isSectionLabel)
+    {
+        lineColor = selectTextColor;
+    }
+    else
+    {
+        lineColor = defTextColor;
+    }
+
+    formattedLine += line;
+    var regexStr = regexStrings.get('keepNLRegex');
+    regex = new RegExp(regexStr[0], regexStr[1])
+    formattedLine = line.split(regex);
+
+    for(let i = 0; i < formattedLine.length; i++)
+    {
+        if(/(\n|\r)/.test(formattedLine))
+        {
+            formattedLine[i] = '';
+        }
+    }
+    
+    if(formattedLine.length > 1)
+    {
+        formattedLine.pop();
+    }
+    
+    // last line always resets to default text color
+    if(formattedLine.length > 0)
+    {
+        formattedLine[0] = lineColor + formattedLine[0];
+        formattedLine[formattedLine.length-1] = formattedLine[formattedLine.length-1] + lineColor;
+    }
+    else
+    {
+        formattedLine.push(defTextColor);
+    }
+
+    return [formattedLine, isSectionLabel];
 }
 
 // display the book text
