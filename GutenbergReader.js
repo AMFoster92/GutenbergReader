@@ -1,7 +1,3 @@
-import readline from 'node:readline/promises'
-import { start } from 'node:repl';
-import { isTypedArray } from 'node:util/types';
-
 // Gutendex URL constants
 const searchURL = 'https://gutendex.com/books/';
 const search = '?search=';
@@ -14,7 +10,7 @@ const regexStrings = new Map([
     ["illustrateRegex", ['\\[\\billustration\\b.*\\](\\\\n|\\s){0,1}/','gi']],                                                    // Matches on illustration tags
     ["newlinesRegex", ['(\\n|\\r)+$/','gm']],                                                                     // Matches on newlines and carriage returns
     ["actLabelRegex", ['\\bact\\b','']],
-    ["chapterRegex", ['^\\bchapter\\s*\\.*[0-9ivx]+\\.*(\\\\n|\\s){0,1}\\b','im']],
+    ["chapterRegex", ['^\\bchapter\\s*\\.*[0-9ivx]+\\.*(\\\\n|\\s){0,1}\\b$','im']],
     ["contentsRegex", ['^\\bcontent[s]+\\s*\\b','im']],
     ["explanatoryRegex", ['^\\bexplanatory\\s*(\\\\n|\\s){0,1}\\b','im']],
     ["prefaceRegex", ['^\\bpreface\\s*(\\\\n|\\s){0,1}\\b','im']],
