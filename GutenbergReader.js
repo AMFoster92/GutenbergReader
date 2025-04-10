@@ -1,7 +1,10 @@
+import { error } from "node:console";
+
 // Gutendex URL constants
 const searchURL = 'https://gutendex.com/books/';
 const search = '?search=';
 const ids = '?ids='
+const booksPerGutPage = 32;
 
 // Regex strings
 const regexStrings = new Map([
@@ -17,7 +20,7 @@ const regexStrings = new Map([
     ["oneIllustRegex", ['^\\[*\\billustration[s.]*\\b','im']],    
     ["punctNLRegex", ['(?:[.?\\\'"”])\\n$','im']],
     ["allPuncRegex", ['[^\\w\\s]{3,}(\\\\n|\\s){0,1}','']],
-    ['keepNLRegex', ['(?=[\n\r])|(?<=[\n\r])', 'g']]
+    ['keepNLRegex', ['(?=[\n\r])|(?<=[\n\r])', '']]
 ]);
 
 // Gutenberg URL constants
@@ -91,7 +94,8 @@ const searchTypes = new Map([
 ]);
 
 // ANSI Codes for text colors https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
-const selectTextColor = "\x1b[31m";
+const selectTextColor = "\x1b[32m";
+const errorTextColor = "\x1b[31m"
 const defTextColor = "\x1b[37m";
 const hideCursor = "\x1b[?25l"
 const showCursor = "\x1b[?25h";
@@ -152,7 +156,7 @@ function moveCursorUp ({cursorPos})
 
     return (a,b,c,d) => 
     {
-        return [cursorPos, false, c, d];
+        return [cursorPos, false, c, d, null];
     }
 }
 
@@ -190,14 +194,14 @@ function moveCursorDown({cursorPos, showMenu, curPage, data, hasRead})
 
     return (a,b,c,d) =>
     { 
-        return [cursorPos, false, c, d];
+        return [cursorPos, false, c, d, null];
 
     };
 }
 
 function gotoNextPage({cursorPos, curPage, data, showMenu})
 {
-    var maxPage = null
+    var maxPage = null;
     
     if(showMenu.name === 'showSearchMenu')
     {
@@ -219,7 +223,7 @@ function gotoNextPage({cursorPos, curPage, data, showMenu})
 
     return (a,b,c,d) =>
     {
-        return [0, false, c, curPage];
+        return [0, false, c, curPage, null];
     }
 }
 
@@ -232,7 +236,7 @@ function gotoPrevPage({cursorPos, curPage, data})
 
     return (a,b,c,d) =>
     {
-        return [0, false, c, curPage,d];
+        return [0, false, c, curPage, null];
     }
 }
 
@@ -240,7 +244,7 @@ function gotoMainMenu ()
 {
     return (a,b,c,d) => 
         {
-            return [0, b, null, 0];
+            return [0, b, null, 0, null];
         };
 }
 
@@ -248,7 +252,7 @@ function exitReader()
 {
     return (a,b,c,d) => 
     {
-        return [0, true, null, 0];
+        return [0, true, null, 0, null];
     };
 }
 
@@ -261,7 +265,7 @@ function exitReader()
  * 
  * 
  **************************************/ 
-function showMainMenu({cursorPos, hasRead})
+function showMainMenu({cursorPos, hasRead, errorMsg})
 {
     console.clear();
     console.log(defTextColor, "Gutenberg Reader Main Menu\n");
@@ -283,7 +287,7 @@ function showMainMenu({cursorPos, hasRead})
 
     if(hasRead)
     {
-        console.log("\n");
+        console.log('\n');
         if (cursorPos === mainMenuLen - 1)
         {
             console.log(selectTextColor+ "> " + mainMenuStrs[mainMenuLen - 1]);
@@ -303,84 +307,23 @@ function showMainMenu({cursorPos, hasRead})
         console.log();
     }
 
-
-
+    errorMsg ? console.log(errorMsg) : console.log();
+    
     console.log(defTextColor + "\n");
     console.log(menuUpStr + "\t" + menuDownStr + "\t" + selectStr + "\t" + quitStr);
 }
 
-async function showContinueMenu({cursorPos, data, prevData})
+
+// needs data fetching moved so this function
+// can only be responsible for displaying menu content
+function showContinueMenu({cursorPos, data, errorMsg})
 {
-    var books = null;
     var bookLines = booksPerPage;
     var titleStr = "";
     var authorStr = "";
-    var bookData = null;
 
     console.clear();
     console.log("Gutenberg Reader Continue Reading Menu\n\n")
-
-    if(!data)
-    {
-        console.log("No previously read books. Go look some up!");
-        console.log();
-        bookLines--;
-    }
-    else
-    {
-        try
-        {
-            if(!prevData)
-            {
-                books = [];
-
-                bookData = await getData(ids + data.join());
-            }
-            else if (prevData.length < data.length)
-            {
-                let newIDs = data.slice(0,prevData.length-1);
-                bookData = await getData(ids + newIDs.join());
-                books = prevData
-            }
-            else
-            {
-                books = prevData;
-            }
-
-            if(bookData && bookData.count > 0)
-            {
-                bookData = bookData.results;
-
-                if(bookData.length > 0)
-                {
-                    for(let i = 0; i < data.length; i++)
-                    {
-                        for(let j = 0; j < bookData.length; j++)
-                        {
-                            if(bookData[j].id == data[i])
-                            {
-                                if(prevData)
-                                {
-                                    books.reverse();
-                                    books.push(bookData[j])
-                                    books.reverse();
-                                }
-                                else
-                                {
-                                    books.push(bookData[j]);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-        }
-        catch(error)
-        {
-            console.error("Getting book data", error);
-        }
-    }
 
     for(let i = 0; i < bookLines; i++)
     {
@@ -421,22 +364,20 @@ async function showContinueMenu({cursorPos, data, prevData})
             console.log();
         }
 
-        if(i < bookLines-1)
+        if(i < bookLines-2)
         {
             console.log();
         }
     }
 
+    console.log();
+    errorMsg ? console.log('\n' + errorMsg) : console.log('\n');
+
     console.log(defTextColor + menuUpStr + "\t" + menuDownStr + "\t" + selectStr)
     console.log(mainMenuStr + "\t" + quitStr);
-
-    return(a,b,c,d) =>
-    {
-        return [a,b,c,books]
-    }
 }
 
-function showSearchMenu(cursorPos, pageNum, data)
+function showSearchMenu(cursorPos, pageNum, data, errorMsg)
 {
     var titleStr = "";
     var authorStr = "";
@@ -486,9 +427,11 @@ function showSearchMenu(cursorPos, pageNum, data)
         {
             console.log();
             console.log();
+            console.log();
         }
     }
 
+    errorMsg ? console.log('\n' + errorMsg) : console.log();
 
     console.log(defTextColor + menuUpStr + "\t" + menuDownStr + "\t" + prevPageStr + "\t" + nextPageStr);
     console.log(selectStr + "\t" + mainMenuStr + "\t" + quitStr);
@@ -497,18 +440,20 @@ function showSearchMenu(cursorPos, pageNum, data)
 function updateSearchInput(type, str="", errorStr)
 {
     console.clear();
-    console.log("Gutenberg Reader Search Entry\n\n");
+    console.log(defTextColor + "Gutenberg Reader Search Entry\n\n");
     
     for(let i = 0; i < linesPerPage-4;i++)
     {
         console.log();
     }
 
-    if(errorStr)
+
+
+    if (errorStr)
     {
         console.log(errorStr);
     }
-    if(str.includes('~'))
+    else if(str.includes('~'))
     {
         console.log(selectTextColor + "Will exit the Gutenberg Reader");
     }
@@ -523,6 +468,7 @@ function updateSearchInput(type, str="", errorStr)
     
 
     console.log(defTextColor + `\nPlease enter the ${type} to search for: ` + str);
+    console.log();
     console.log(`\n\nEnter an empty search to return to Main Menu\n`);
     console.log("Enter ~ in any search to exit the Gutenberg Reader");
 }
@@ -542,6 +488,7 @@ async function selectMainMenu({cursorPos})
     {
         var quit = false;
         var data = null;
+        var errorMsg = null;
 
         if(cursorPos == mainMenuLen-1)
         {
@@ -551,26 +498,38 @@ async function selectMainMenu({cursorPos})
         {
             try
             {
-                [data,quit] = await searchBooks(cursorPos);
+                [data,quit,errorMsg] = await searchBooks(cursorPos);
             }
             catch(error)
             {
-                console.error("starting book search", error);
+                errorMsg = errorTextColor + "Error starting book search.";
             }
         }
 
-        resolve ((a,b,c,d) => 
+        resolve ((a,b,c) => 
         { 
-            return [0, quit, data, d];
+            if(!errorMsg)
+            {
+                a = 0;
+                b = quit;
+                c = data;
+            }
+
+            return [a,b,c, errorMsg];
         })
     });
 }
 
 async function selectContinueMenu({cursorPos, data})
 {
+    var errorMsg = null;
+    var book = null;
+
     try
     {
-        var data = await getData(ids + data[cursorPos]);
+        var data = null
+        [data, errorMsg] = await getData(ids + data[cursorPos]);
+
         data = data.results;
 
         var formats = Object.keys(data[cursorPos].formats);
@@ -587,17 +546,23 @@ async function selectContinueMenu({cursorPos, data})
         if(bookURL)
         {
             bookURL = data[cursorPos].formats[bookURL];
-            var book = await getBook(bookURL, data[cursorPos].title);
+            [book, errorMsg] = await getBook(bookURL, data[cursorPos].title);
         }
     }
     catch(error)
     {
-        console.error("getting book to continue");
+        errorMsg = errorTextColor + "Error retrieving book to continue from Gutenberg."
     }
 
-    return (a,b,c,d) => 
+    return (a,b,c) => 
     { 
-        return [data[cursorPos], b, book, d];
+        if(!errorMsg)
+        {
+            a = data[cursorPos],
+            c = book
+        }
+
+        return [a,b,c, errorMsg];
     }
 }
 
@@ -607,6 +572,7 @@ async function selectSearchMenu({cursorPos, curPage, data})
     var formats = Object.keys(data[cursorPos].formats);
     var url = null;
     var book = null;
+    var errorMsg = null;
 
     for(let i = 0; i < formats.length; i++)
     {
@@ -622,17 +588,23 @@ async function selectSearchMenu({cursorPos, curPage, data})
 
         try
         {
-            book = await getBook(url, data[cursorPos].title);
+            [book, errorMsg] = await getBook(url, data[cursorPos].title);
         }
         catch(error)
         {
-            console.error("retrieving book from search", error);
+            errorMsg = errorTextColor + "Error retriving book to read from Gutenberg."
         }
     }
 
     return (a,b,c,d) => 
     { 
-        return [data[index].id, b, book, d];
+        if(!errorMsg)
+        {
+            a = data[index].id;
+            c = book;
+        }
+
+        return [a,b,c, d, errorMsg];
     }
 }
 
@@ -658,59 +630,70 @@ async function searchBooks(typeNum)
     var books = null;
     var splitRegex = /[^A-Za-z0-9]/g;
     var query = "";
+    var raw = null;
+    var errorMsg = null;
+    var statusStr = "";
+    var numChunks = 1;
+    var curChunk = 1;
 
     try
     {
-    query = await stringBuilder(searchTypes.get(typeNum));
-    var origQuery = query.toLowerCase();
+        [query, errorMsg] = await stringBuilder(searchTypes.get(typeNum));
+        var origQuery = query.toLowerCase();
+
+        if (query.includes('~'))
+        {
+            quit = true;
+        }
+        else if(query)
+        {
+            try
+            {
+                statusStr = selectTextColor + "Retreiving data chunks from Gutendex..."; 
+                updateSearchInput(searchTypes.get(typeNum), origQuery, statusStr);    
+                [raw, errorMsg] = await getData(search + query);
+                
+                // get all the results
+                if(raw && raw.count > 0)
+                {
+                    numChunks = Math.floor(raw.count / booksPerGutPage) + (raw.count % booksPerGutPage == 0 ? 0 : 1);
+                    books = raw.results  
+
+                    statusStr = selectTextColor + "Received Gutendex data chunk (" + curChunk + " / " + numChunks + ")"; 
+                    updateSearchInput(searchTypes.get(typeNum), origQuery, statusStr);                      
+
+                    while(raw.next != null)
+                    {
+                        query = raw.next.replace(searchURL, '');
+                        curChunk++;
+                        
+                        [raw, errorMsg] = await getData(query);     // get next page of results
+                        statusStr = selectTextColor + "Received Gutendex data chunk (" + curChunk + " / " + numChunks + ")"; 
+                        updateSearchInput(searchTypes.get(typeNum), origQuery, statusStr);  
+                        books.push(...raw.results);  // use spread operator to push all at once  
+                    }
+
+                    statusStr = selectTextColor + "Received Gutendex data chunk (" + curChunk + " / " + numChunks + ")"; 
+                    updateSearchInput(searchTypes.get(typeNum), origQuery, statusStr);   
+                }
+
+                if(books && books.length > 0)
+                {
+                    books = filterBooks(books, origQuery.toLowerCase().split(splitRegex).filter(Boolean), searchTypes.get(typeNum))
+                };
+            }
+            catch(error)
+            {
+                errorMsg = errorTextColor + "Error getting search data from Gutendex.";
+            }
+        }
     }
     catch(error)
     {
-        console.error('building search string', error);
+        errorMsg = errorTextColor + "Error getting search string.";
     }
 
-    if (query.includes('~'))
-    {
-        quit = true;
-    }
-    else if(query)
-    {
-        try
-        {
-            raw = await getData(search + query);
-            
-            // get all the results
-            if(raw.count > 0)
-            {
-                books = raw.results                         
-
-                while(raw.next != null)
-                {
-                    query = raw.next.replace(searchURL, '');
-                    
-                    raw = await getData(query);     // get next page of results
-
-                    if(raw.count > 0)
-                    {
-                        books.push(...raw.results);  // use spread operator to push all at once
-                    }
-                }
-            }
-
-            if(books && books.length > 0)
-            {
-                books = filterBooks(books, origQuery.toLowerCase().split(splitRegex).filter(Boolean), searchTypes.get(typeNum))
-            };
-        }
-        catch(error)
-        {
-            console.error('getting book information json', error);
-        }
-
-
-    }
-
-    return [books, quit];
+    return [books, quit, errorMsg];
 }
 
 function filterBooks(rawBooks, query, searchType)
@@ -763,6 +746,7 @@ async function stringBuilder(type)
         var finished = false;       // string entry finished flag
         var keyInt = null;          // integer value for utf-8 key code
         var key = null;             // utf-8 encoded key code
+        var errorMsg = null;
 
         updateSearchInput(type);
 
@@ -776,7 +760,7 @@ async function stringBuilder(type)
             }
             catch(error)
             {
-                console.error("Getting key press", error);
+                errorMsg = errorTextColor + "Error getting keypress from user.";
             }
 
             if(keyInt === backspaceInt)
@@ -798,12 +782,15 @@ async function stringBuilder(type)
             updateSearchInput(type, str);
         }
 
-        resolve(str);
+        resolve([str, errorMsg]);
     });
 }
 
 // get the Gutendex query data
-async function getData(str){
+async function getData(str)
+{
+    var errorMsg = "";
+
     try
     {
         var data = null;
@@ -818,28 +805,33 @@ async function getData(str){
                 data = json;
             }
         }
-
-        return data;
+  
     }
     catch(error)
     {
-        console.error("fetching book data", error);
+        errorMsg = errorTextColor + "Error occured while getting data from Gutendex: " + error.cause.code;
     }
+
+    return [data, errorMsg];
 }
 
 // get the book text from Gutenberg
 async function getBook(bookURL, title)
 {
+    var errorMsg = null;
+
     try
     {
+        var book = null;
+
         const request = await fetch(bookURL);
-        if(request)
+        if(request.ok)
         {
             const text = await request.text();
 
             if(text)
             {
-                var book = formatBook(text, title.split());
+                book = formatBook(text, title.split());
             }
             else
             {
@@ -847,12 +839,14 @@ async function getBook(bookURL, title)
             }
         }
 
-        return book;
+        
     }
     catch(error)
     {
-        console.error('fetching book from gutenberg', error);
+        errorMsg = errorTextColor + "Error while getting book from Gutenberg: " + error.cause.code;
     }
+
+    return [book, errorMsg];
 }
 
 
@@ -1045,6 +1039,44 @@ function readBook(curPage, data)
     console.log(prevPageStr + '\t' + nextPageStr + '\t' + mainMenuStr + '\t' + quitStr);
 }
 
+async function getPreviousBooks(data)
+{
+    var books = null;
+    var bookData = null;
+    var errorMsg = null;
+
+    try
+    {
+        [bookData, errorMsg] = await getData(ids + data.join());
+
+        if(bookData && bookData.count > 0)
+        {
+            bookData = bookData.results;
+
+            if(bookData.length > 0)
+            {
+                books = [];
+
+                for(let i = 0; i < data.length; i++)
+                {
+                    for(let j = 0; j < bookData.length; j++)
+                    {
+                        if(bookData[j].id == data[i])
+                        {
+                            books.push(bookData[j]);
+                        }
+                    }
+                }
+            }
+        }    
+    }
+    catch(error)
+    {
+        errorMsg = errorTextColor + "Error occurred while getting data from Gutendex."
+    }
+
+    return [books, errorMsg];
+}
 
 
 
@@ -1062,9 +1094,9 @@ async function main()
     var curPage = 0;
     var input = null;
     var data = null;
-    var prevBooks = null;
     var prevData = null;
     var navResult = null;
+    var errorMsg = null;
 
 
     do
@@ -1072,7 +1104,7 @@ async function main()
         // Main Menu Operations
         do
         {
-            showMainMenu({cursorPos:cursorPos, hasRead: prevBooks ? true : false});
+            showMainMenu({cursorPos:cursorPos, hasRead: prevData ? true : false, errorMsg: errorMsg});
 
             try
             {
@@ -1080,49 +1112,53 @@ async function main()
 
                 if (menuNavFunc.has(input))
                 {
-                    navResult = await menuNavFunc.get(input)({cursorPos:cursorPos, showMenu:showMainMenu, hasRead: prevBooks ? true : false});
+                    navResult = await menuNavFunc.get(input)({cursorPos:cursorPos, showMenu:showMainMenu, hasRead: prevData ? true : false});
 
-                    [cursorPos, quit, data] = await navResult(cursorPos, quit, data);
+                    [cursorPos, quit, data, errorMsg] = await navResult(cursorPos, quit, data);
                 }
             }
             catch(error)   // promise broke
             {
-                console.error('navigating main menu', error);
+                errorMsg = errorTextColor + "Error getting main menu navigation function.";
             }
         } while (![selectKey, quitKey].includes(input));
  
         // Continue Selection Operations
-        if(data == "continue")
+        if(data == "continue" && !errorMsg)
         {
-            do
+            [data, errorMsg] = getPreviousBooks(prevBooks)
+
+            if(!errorMsg)
             {
-                navResult = await showContinueMenu({cursorPos:cursorPos, data:prevBooks, prevData:prevData});
-
-                [cursorPos, quit, data, prevData] = await navResult(cursorPos, quit, data, prevData);
-
-                try
+                do
                 {
-                input = await getKeyPress();
+                    showContinueMenu({cursorPos:cursorPos, data:data, errorMsg:errorMsg});
 
-                if (continueNavFunc.has(input))
+                    try
                     {
-                        navResult = await continueNavFunc.get(input)({cursorPos:cursorPos, showMenu:showContinueMenu, data:prevBooks});
-        
-                        [cursorPos, quit, data, prevData] = await navResult(cursorPos, quit, data, prevData);
+                    input = await getKeyPress();
+
+                    if (continueNavFunc.has(input))
+                        {
+                            navResult = await continueNavFunc.get(input)({cursorPos:cursorPos, showMenu:showContinueMenu, data:data});
+            
+                            [cursorPos, quit, data, errorMsg] = await navResult(cursorPos, quit, data);
+                        }
                     }
-                }
-                catch(error)
-                {
-                    console.error('continue menu navigation', error);
-                }
-            } while(![mainMenuKey, selectKey, quitKey].includes(input))
+                    catch(error)
+                    {
+                        errorMsg = errorTextColor + "Error getting continue menu navigation function."
+                    }
+                } while(![mainMenuKey, selectKey, quitKey].includes(input))
+            }
+
         }
         // Book Selection Operations
-        else if (data)
+        else if (data && !errorMsg)
         {
             do
             {
-                showSearchMenu(cursorPos, curPage, data);
+                showSearchMenu(cursorPos, curPage, data, errorMsg);
 
                 try
                 {
@@ -1132,44 +1168,55 @@ async function main()
                     {
                             navResult = await searchNavFunc.get(input)({cursorPos:cursorPos, showMenu:showSearchMenu, curPage:curPage, data:data});
 
-                            [cursorPos, quit, data, curPage] = await navResult(cursorPos, quit, data, curPage);
+                            [cursorPos, quit, data, curPage, errorMsg] = await navResult(cursorPos, quit, data, curPage);
                     }
                 }
                 catch(error)
                 {
-                    console.error("navigating search menu");
+                    errorMsg = errorTextColor + "Error getting search menu navigation function.";
                 }
 
             } while(![mainMenuKey, selectKey, quitKey].includes(input));
         }
         
         // Read Book Operations
-        if (data && ![mainMenuKey, quitKey].includes(input))
+        if (data && ![mainMenuKey, quitKey].includes(input) && !errorMsg)
         {
-            if(!prevBooks)
+            if(!prevData)
             {
-                prevBooks = [];
+                prevData = [];
             }
 
+            // put oldest at front
+            prevData.reverse();
+
             // have we already seen this before?
-            if(!prevBooks.includes(cursorPos))
+            if(prevData.includes(cursorPos))
             {
-                prevBooks.reverse();
-                prevBooks.push(cursorPos);
-                prevBooks.reverse();
+                prevData.splice(prevData.indexOf(cursorPos), 1);
+            }
+
+            // add/re-add the book to list as most recent
+            if(!prevData.includes(cursorPos))
+            {
+                prevData.push(cursorPos);
             }
 
             // have we seen more than 10 books?
-            if(prevBooks.length > booksPerPage)
+            if(prevData.length > booksPerPage)
             {
-                prevBooks.reverse();
-                prevBooks = prevBooks.slice(1);
-                prevBooks.reverse();
+                // trim the list
+                prevData = prevData.slice(1);
             }
+
+            // put newest at front
+            prevData.reverse();
+
+
             
             do
             {
-                readBook(curPage, data);
+                readBook(curPage, data, errorMsg);
 
                 try
                 {   input = await getKeyPress();
@@ -1178,14 +1225,19 @@ async function main()
                     {
                         navResult = bookNavFunc.get(input)({cursorPos:cursorPos, showMenu:readBook, curPage:curPage, data:data});
 
-                        [cursorPos, quit, data, curPage] = navResult(cursorPos, quit, data, curPage);
+                        [cursorPos, quit, data, curPage, errorMsg] = navResult(cursorPos, quit, data, curPage);
                     }
                 }
                 catch(error)
                 {
-                    console.error("getting book to continue");
+                    errorMsg = errorTextColor + "Error get book navigation menu function.";
                 }
             } while(![mainMenuKey, quitKey].includes(input));
+        }
+
+        if(errorMsg)
+        {
+            cursorPos = 0;
         }
 
         curPage = 0;
